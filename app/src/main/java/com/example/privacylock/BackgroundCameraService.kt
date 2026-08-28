@@ -47,7 +47,12 @@ class BackgroundCameraService : LifecycleService() {
         const val NOTIF_ID = 1001
         var isRunning = false
         private const val SAMPLE_RATE = 16000
-        private const val VOICE_THRESHOLD_RMS = 2400.0
+
+        // Dynamic Baseline Parameters
+        private const val WARMUP_FRAMES = 30 // ~3 sec grace period to calibrate to PW volume
+        private const val SPIKE_RATIO = 2.4 // Must be 2.4x louder than ongoing lecture audio
+        private const val MIN_ABSOLUTE_RMS = 3000.0 // Minimum physical sound threshold
+        private const val SMOOTHING_FACTOR = 0.08 // Alpha for Exponential Moving Average
     }
 
     override fun onCreate() {
@@ -79,7 +84,7 @@ class BackgroundCameraService : LifecycleService() {
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Privacy Guard Running")
-            .setContentText("Monitoring visual and acoustic vectors...")
+            .setContentText("Adaptive visual and acoustic radar active...")
             .setSmallIcon(android.R.drawable.ic_secure)
             .setOngoing(true)
             .build()
@@ -182,6 +187,10 @@ class BackgroundCameraService : LifecycleService() {
 
             audioExecutor.execute {
                 val buffer = ShortArray(bufferSize)
+                var baselineRms = 1200.0
+                var frameCount = 0
+                var consecutiveSpikeCount = 0
+
                 while (isRunning && isAudioMonitoring) {
                     val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                     if (readSize > 0) {
@@ -189,9 +198,27 @@ class BackgroundCameraService : LifecycleService() {
                         for (i in 0 until readSize) {
                             sum += buffer[i] * buffer[i]
                         }
-                        val rms = sqrt(sum / readSize)
-                        if (rms > VOICE_THRESHOLD_RMS && isRunning) {
-                            triggerLockdown()
+                        val currentRms = sqrt(sum / readSize)
+
+                        // 1. Initial 3-second calibration phase
+                        if (frameCount < WARMUP_FRAMES) {
+                            baselineRms = (baselineRms + currentRms) / 2.0
+                            frameCount++
+                            continue
+                        }
+
+                        // 2. Anomaly Spike Detection
+                        val dynamicThreshold = baselineRms * SPIKE_RATIO
+                        if (currentRms > dynamicThreshold && currentRms > MIN_ABSOLUTE_RMS) {
+                            consecutiveSpikeCount++
+                            // Requires 2 consecutive buffer spikes (~200ms) to filter momentary digital clicks
+                            if (consecutiveSpikeCount >= 2 && isRunning) {
+                                triggerLockdown()
+                            }
+                        } else {
+                            consecutiveSpikeCount = 0
+                            // 3. Smooth continuous baseline adaptation (Tracks lecture volume changes)
+                            baselineRms = (baselineRms * (1.0 - SMOOTHING_FACTOR)) + (currentRms * SMOOTHING_FACTOR)
                         }
                     }
                 }
