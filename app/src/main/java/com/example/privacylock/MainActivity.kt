@@ -6,43 +6,31 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetectorOptions
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var dpm: DevicePolicyManager
     private lateinit var adminComponent: ComponentName
-    private lateinit var cameraExecutor: ExecutorService
 
     private lateinit var tvStatus: TextView
     private lateinit var btnAdmin: Button
     private lateinit var btnToggle: Button
-    private lateinit var previewView: PreviewView
 
-    private var isProtecting = false
-    private var cameraProvider: ProcessCameraProvider? = null
-
-    private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                startCamera()
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
+            if (cameraGranted) {
+                toggleService()
             } else {
-                Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Camera permission is required.", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -52,12 +40,12 @@ class MainActivity : AppCompatActivity() {
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
-        cameraExecutor = Executors.newSingleThreadExecutor()
 
         tvStatus = findViewById(R.id.tvStatus)
         btnAdmin = findViewById(R.id.btnAdmin)
         btnToggle = findViewById(R.id.btnToggle)
-        previewView = findViewById(R.id.previewView)
+
+        updateUi()
 
         btnAdmin.setOnClickListener {
             if (!dpm.isAdminActive(adminComponent)) {
@@ -76,104 +64,55 @@ class MainActivity : AppCompatActivity() {
 
         btnToggle.setOnClickListener {
             if (!dpm.isAdminActive(adminComponent)) {
-                Toast.makeText(this, "Enable Device Admin first!", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Grant Device Admin first!", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-
-            if (isProtecting) {
-                stopProtection()
-            } else {
-                startProtection()
-            }
+            checkPermissionsAndToggle()
         }
     }
 
-    private fun startProtection() {
-        isProtecting = true
-        btnToggle.text = "2. Stop Protection"
-        tvStatus.text = "Status: ACTIVE (Guarding screen)"
+    override fun onResume() {
+        super.onResume()
+        updateUi()
+    }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
+    private fun checkPermissionsAndToggle() {
+        val permissionsToRequest = mutableListOf(Manifest.permission.CAMERA)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val allGranted = permissionsToRequest.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+
+        if (allGranted) {
+            toggleService()
         } else {
-            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
-    private fun stopProtection() {
-        isProtecting = false
-        btnToggle.text = "2. Start Protection"
-        tvStatus.text = "Status: Stopped"
-        cameraProvider?.unbindAll()
+    private fun toggleService() {
+        val intent = Intent(this, BackgroundCameraService::class.java)
+        if (BackgroundCameraService.isRunning) {
+            stopService(intent)
+            BackgroundCameraService.isRunning = false
+            Toast.makeText(this, "Background Guard Stopped", Toast.LENGTH_SHORT).show()
+        } else {
+            ContextCompat.startForegroundService(this, intent)
+            Toast.makeText(this, "Background Guard Active! You can now switch to PW.", Toast.LENGTH_LONG).show()
+        }
+        updateUi()
     }
 
-    @OptIn(ExperimentalGetImage::class)
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-        cameraProviderFuture.addListener({
-            cameraProvider = cameraProviderFuture.get()
-
-            val preview = Preview.Builder().build().also {
-                it.surfaceProvider = previewView.surfaceProvider
-            }
-
-            val options = FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .build()
-            val detector = FaceDetection.getClient(options)
-
-            val imageAnalysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-
-            imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                val mediaImage = imageProxy.image
-                if (mediaImage != null && isProtecting) {
-                    val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                    detector.process(image)
-                        .addOnSuccessListener { faces ->
-                            val count = faces.size
-                            runOnUiThread {
-                                tvStatus.text = "Status: Monitoring | Faces: $count"
-                            }
-                            if (count >= 2 && isProtecting) {
-                                runOnUiThread {
-                                    stopProtection()
-                                }
-                                if (dpm.isAdminActive(adminComponent)) {
-                                    dpm.lockNow()
-                                }
-                            }
-                        }
-                        .addOnCompleteListener {
-                            imageProxy.close()
-                        }
-                } else {
-                    imageProxy.close()
-                }
-            }
-
-            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-
-            try {
-                cameraProvider?.unbindAll()
-                cameraProvider?.bindToLifecycle(
-                    this,
-                    cameraSelector,
-                    preview,
-                    imageAnalysis
-                )
-            } catch (exc: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Camera error: ${exc.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        cameraExecutor.shutdown()
+    private fun updateUi() {
+        if (BackgroundCameraService.isRunning) {
+            tvStatus.text = "Status: ACTIVE (Running in Background)"
+            btnToggle.text = "2. Stop Background Protection"
+        } else {
+            tvStatus.text = "Status: Idle"
+            btnToggle.text = "2. Start Background Protection"
+        }
     }
 }

@@ -46,6 +46,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     implementation("androidx.camera:camera-view:1.4.2")
 
+    // Lifecycle Service for Background CameraX
+    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+
     // ML Kit Face Detection
     implementation("com.google.mlkit:face-detection:16.1.7")
 }
