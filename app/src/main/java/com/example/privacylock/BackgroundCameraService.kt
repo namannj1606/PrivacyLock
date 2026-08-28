@@ -1,5 +1,6 @@
 package com.example.privacylock
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.os.Build
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
@@ -23,6 +28,7 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.sqrt
 
 class BackgroundCameraService : LifecycleService() {
 
@@ -31,10 +37,17 @@ class BackgroundCameraService : LifecycleService() {
     private lateinit var cameraExecutor: ExecutorService
     private var cameraProvider: ProcessCameraProvider? = null
 
+    private var audioRecord: AudioRecord? = null
+    private var aec: AcousticEchoCanceler? = null
+    private var isAudioMonitoring = false
+    private lateinit var audioExecutor: ExecutorService
+
     companion object {
         const val CHANNEL_ID = "privacy_guard_channel"
         const val NOTIF_ID = 1001
         var isRunning = false
+        private const val SAMPLE_RATE = 16000
+        private const val VOICE_THRESHOLD_RMS = 2400.0
     }
 
     override fun onCreate() {
@@ -42,12 +55,14 @@ class BackgroundCameraService : LifecycleService() {
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
         cameraExecutor = Executors.newSingleThreadExecutor()
+        audioExecutor = Executors.newSingleThreadExecutor()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         isRunning = true
         startForegroundNotification()
         startBackgroundCamera()
+        startBackgroundAudioMonitor()
         return super.onStartCommand(intent, flags, startId)
     }
 
@@ -64,21 +79,24 @@ class BackgroundCameraService : LifecycleService() {
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Privacy Guard Running")
-            .setContentText("Guarding screen against multiple faces...")
+            .setContentText("Monitoring visual and acoustic vectors...")
             .setSmallIcon(android.R.drawable.ic_secure)
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceCompat.startForeground(
                 this,
                 NOTIF_ID,
                 notification,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                } else {
-                    0
-                }
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIF_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             )
         } else {
             startForeground(NOTIF_ID, notification)
@@ -107,9 +125,7 @@ class BackgroundCameraService : LifecycleService() {
                     detector.process(image)
                         .addOnSuccessListener { faces ->
                             if (faces.size >= 2 && isRunning) {
-                                if (dpm.isAdminActive(adminComponent)) {
-                                    dpm.lockNow()
-                                }
+                                triggerLockdown()
                             }
                         }
                         .addOnCompleteListener {
@@ -135,10 +151,78 @@ class BackgroundCameraService : LifecycleService() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    @SuppressLint("MissingPermission")
+    private fun startBackgroundAudioMonitor() {
+        val bufferSize = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+
+        if (bufferSize <= 0) return
+
+        try {
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            )
+
+            if (AcousticEchoCanceler.isAvailable()) {
+                audioRecord?.let {
+                    aec = AcousticEchoCanceler.create(it.audioSessionId)
+                    aec?.enabled = true
+                }
+            }
+
+            audioRecord?.startRecording()
+            isAudioMonitoring = true
+
+            audioExecutor.execute {
+                val buffer = ShortArray(bufferSize)
+                while (isRunning && isAudioMonitoring) {
+                    val readSize = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    if (readSize > 0) {
+                        var sum = 0.0
+                        for (i in 0 until readSize) {
+                            sum += buffer[i] * buffer[i]
+                        }
+                        val rms = sqrt(sum / readSize)
+                        if (rms > VOICE_THRESHOLD_RMS && isRunning) {
+                            triggerLockdown()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @Synchronized
+    private fun triggerLockdown() {
+        if (dpm.isAdminActive(adminComponent)) {
+            dpm.lockNow()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        isAudioMonitoring = false
+
         cameraProvider?.unbindAll()
         cameraExecutor.shutdown()
+
+        try {
+            aec?.release()
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        audioExecutor.shutdown()
     }
 }

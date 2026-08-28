@@ -27,10 +27,12 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-            if (cameraGranted) {
+            val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+
+            if (cameraGranted && audioGranted) {
                 toggleService()
             } else {
-                Toast.makeText(this, "Camera permission is required.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Camera and Microphone permissions required.", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -53,7 +55,7 @@ class MainActivity : AppCompatActivity() {
                     putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
                     putExtra(
                         DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Required to lock device when 2 or more faces are detected."
+                        "Required to lock device upon intruder detection."
                     )
                 }
                 startActivity(intent)
@@ -77,7 +79,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionsAndToggle() {
-        val permissionsToRequest = mutableListOf(Manifest.permission.CAMERA)
+        val permissionsToRequest = mutableListOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -98,21 +103,21 @@ class MainActivity : AppCompatActivity() {
         if (BackgroundCameraService.isRunning) {
             stopService(intent)
             BackgroundCameraService.isRunning = false
-            Toast.makeText(this, "Background Guard Stopped", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Defense Systems Offline", Toast.LENGTH_SHORT).show()
         } else {
             ContextCompat.startForegroundService(this, intent)
-            Toast.makeText(this, "Background Guard Active! You can now switch to PW.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Visual & Acoustic Guard Active!", Toast.LENGTH_LONG).show()
         }
         updateUi()
     }
 
     private fun updateUi() {
         if (BackgroundCameraService.isRunning) {
-            tvStatus.text = "Status: ACTIVE (Running in Background)"
-            btnToggle.text = "2. Stop Background Protection"
+            tvStatus.text = "Status: ACTIVE (Camera + Mic Radar)"
+            btnToggle.text = "2. Stop Protection"
         } else {
             tvStatus.text = "Status: Idle"
-            btnToggle.text = "2. Start Background Protection"
+            btnToggle.text = "2. Start Protection"
         }
     }
 }
