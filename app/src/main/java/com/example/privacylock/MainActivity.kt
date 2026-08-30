@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -22,17 +23,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var tvStatus: TextView
     private lateinit var btnAdmin: Button
-    private lateinit var btnToggle: Button
+    private lateinit var btnAccessibility: Button
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-            val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
-
-            if (cameraGranted && audioGranted) {
-                toggleService()
-            } else {
-                Toast.makeText(this, "Camera and Microphone permissions required.", Toast.LENGTH_SHORT).show()
+            if (!cameraGranted) {
+                Toast.makeText(this, "Camera permission is required.", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -45,7 +42,7 @@ class MainActivity : AppCompatActivity() {
 
         tvStatus = findViewById(R.id.tvStatus)
         btnAdmin = findViewById(R.id.btnAdmin)
-        btnToggle = findViewById(R.id.btnToggle)
+        btnAccessibility = findViewById(R.id.btnToggle)
 
         updateUi()
 
@@ -55,7 +52,7 @@ class MainActivity : AppCompatActivity() {
                     putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
                     putExtra(
                         DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Required to lock device upon intruder detection."
+                        "Required to lock device when 2 or more faces are detected."
                     )
                 }
                 startActivity(intent)
@@ -64,13 +61,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnToggle.setOnClickListener {
-            if (!dpm.isAdminActive(adminComponent)) {
-                Toast.makeText(this, "Grant Device Admin first!", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            checkPermissionsAndToggle()
+        btnAccessibility.setOnClickListener {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            startActivity(intent)
+            Toast.makeText(this, "Find 'PrivacyLock' and toggle it ON", Toast.LENGTH_LONG).show()
         }
+
+        checkPermissions()
     }
 
     override fun onResume() {
@@ -78,46 +75,30 @@ class MainActivity : AppCompatActivity() {
         updateUi()
     }
 
-    private fun checkPermissionsAndToggle() {
-        val permissionsToRequest = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO
-        )
+    private fun checkPermissions() {
+        val permissionsToRequest = mutableListOf(Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        val allGranted = permissionsToRequest.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        val missing = permissionsToRequest.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
-        if (allGranted) {
-            toggleService()
-        } else {
-            permissionLauncher.launch(permissionsToRequest.toTypedArray())
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing.toTypedArray())
         }
-    }
-
-    private fun toggleService() {
-        val intent = Intent(this, BackgroundCameraService::class.java)
-        if (BackgroundCameraService.isRunning) {
-            stopService(intent)
-            BackgroundCameraService.isRunning = false
-            Toast.makeText(this, "Defense Systems Offline", Toast.LENGTH_SHORT).show()
-        } else {
-            ContextCompat.startForegroundService(this, intent)
-            Toast.makeText(this, "Visual & Acoustic Guard Active!", Toast.LENGTH_LONG).show()
-        }
-        updateUi()
     }
 
     private fun updateUi() {
-        if (BackgroundCameraService.isRunning) {
-            tvStatus.text = "Status: ACTIVE (Camera + Mic Radar)"
-            btnToggle.text = "2. Stop Protection"
+        val adminActive = dpm.isAdminActive(adminComponent)
+        if (adminActive) {
+            tvStatus.text = "Status: Ready (Auto-activates with PW)"
+            btnAdmin.text = "1. Device Admin: ACTIVE"
         } else {
-            tvStatus.text = "Status: Idle"
-            btnToggle.text = "2. Start Protection"
+            tvStatus.text = "Status: Device Admin Required"
+            btnAdmin.text = "1. Grant Device Admin"
         }
+        btnAccessibility.text = "2. Enable Auto-Trigger (Accessibility)"
     }
 }
