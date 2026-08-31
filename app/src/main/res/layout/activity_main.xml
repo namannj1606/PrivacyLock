@@ -2,34 +2,38 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:gravity="center"
     android:orientation="vertical"
-    android:padding="16dp"
-    android:gravity="center_horizontal">
+    android:padding="24dp">
 
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Status: Ready"
+        android:text="Status: Initializing..."
         android:textSize="18sp"
-        android:layout_marginBottom="12dp" />
+        android:textStyle="bold"
+        android:layout_marginBottom="28dp" />
 
     <Button
         android:id="@+id/btnAdmin"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="1. Grant Device Admin" />
+        android:text="1. Grant Device Admin"
+        android:layout_marginBottom="12dp" />
 
     <Button
         android:id="@+id/btnToggle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="2. Start Protection"
-        android:layout_marginTop="8dp" />
+        android:text="2. Allow Display Over Apps"
+        android:layout_marginBottom="12dp" />
 
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
-        android:layout_width="200dp"
-        android:layout_height="260dp"
-        android:layout_marginTop="16dp" />
+    <Button
+        android:id="@+id/btnAccessibility"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="3. Enable Auto-Trigger (Accessibility)"
+        android:layout_marginBottom="12dp" />
+
 </LinearLayout>
