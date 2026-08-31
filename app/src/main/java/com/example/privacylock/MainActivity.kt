@@ -6,10 +6,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -24,13 +22,14 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var tvStatus: TextView
     private lateinit var btnAdmin: Button
-    private lateinit var btnOverlay: Button
-    private lateinit var btnAccessibility: Button
+    private lateinit var btnToggle: Button
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-            if (!cameraGranted) {
+            if (cameraGranted) {
+                toggleService()
+            } else {
                 Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show()
             }
         }
@@ -44,8 +43,7 @@ class MainActivity : AppCompatActivity() {
 
         tvStatus = findViewById(R.id.tvStatus)
         btnAdmin = findViewById(R.id.btnAdmin)
-        btnOverlay = findViewById(R.id.btnToggle)
-        btnAccessibility = findViewById(R.id.btnAccessibility)
+        btnToggle = findViewById(R.id.btnToggle)
 
         updateUi()
 
@@ -55,33 +53,22 @@ class MainActivity : AppCompatActivity() {
                     putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
                     putExtra(
                         DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Required to lock screen when multiple faces are detected."
+                        "Required to lock device when 2 or more faces are detected."
                     )
                 }
                 startActivity(intent)
             } else {
-                Toast.makeText(this, "Device Admin is active!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Device Admin already active!", Toast.LENGTH_SHORT).show()
             }
         }
 
-        btnOverlay.setOnClickListener {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-                startActivity(intent)
-            } else {
-                Toast.makeText(this, "Overlay permission already granted!", Toast.LENGTH_SHORT).show()
+        btnToggle.setOnClickListener {
+            if (!dpm.isAdminActive(adminComponent)) {
+                Toast.makeText(this, "Please enable Device Admin first.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
+            checkPermissionsAndToggle()
         }
-
-        btnAccessibility.setOnClickListener {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            startActivity(intent)
-        }
-
-        checkPermissions()
     }
 
     override fun onResume() {
@@ -89,7 +76,7 @@ class MainActivity : AppCompatActivity() {
         updateUi()
     }
 
-    private fun checkPermissions() {
+    private fun checkPermissionsAndToggle() {
         val permissionsToRequest = mutableListOf(Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -101,21 +88,32 @@ class MainActivity : AppCompatActivity() {
 
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
+        } else {
+            toggleService()
         }
+    }
+
+    private fun toggleService() {
+        val intent = Intent(this, BackgroundCameraService::class.java)
+        if (BackgroundCameraService.isRunning) {
+            stopService(intent)
+            BackgroundCameraService.isRunning = false
+        } else {
+            ContextCompat.startForegroundService(this, intent)
+        }
+        updateUi()
     }
 
     private fun updateUi() {
         val adminActive = dpm.isAdminActive(adminComponent)
-        val overlayActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
-
-        if (adminActive && overlayActive) {
-            tvStatus.text = "Status: Fully Armed (Auto-PW Radar)"
-        } else {
-            tvStatus.text = "Status: Setup Incomplete"
-        }
-
         btnAdmin.text = if (adminActive) "1. Device Admin: ACTIVE" else "1. Grant Device Admin"
-        btnOverlay.text = if (overlayActive) "2. Overlay: ACTIVE" else "2. Allow Display Over Apps"
-        btnAccessibility.text = "3. Enable Auto-Trigger (Accessibility)"
+
+        if (BackgroundCameraService.isRunning) {
+            tvStatus.text = "Status: ARMED & MONITORING"
+            btnToggle.text = "2. Stop Protection"
+        } else {
+            tvStatus.text = "Status: Standby / Idle"
+            btnToggle.text = "2. Start Protection"
+        }
     }
 }

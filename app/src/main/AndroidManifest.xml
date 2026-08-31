@@ -6,7 +6,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -28,15 +27,6 @@
             android:name=".BackgroundCameraService"
             android:foregroundServiceType="camera"
             android:exported="false" />
-
-        <service
-            android:name=".AppTriggerAccessibilityService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-        </service>
 
         <receiver
             android:name=".MyDeviceAdminReceiver"

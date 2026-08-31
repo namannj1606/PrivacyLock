@@ -3,16 +3,13 @@ package com.example.privacylock
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.os.Build
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -35,9 +32,6 @@ class BackgroundCameraService : LifecycleService() {
     private lateinit var cameraExecutor: ExecutorService
     private var cameraProvider: ProcessCameraProvider? = null
 
-    private var windowManager: WindowManager? = null
-    private var overlayView: View? = null
-
     companion object {
         const val CHANNEL_ID = "privacy_guard_channel"
         const val NOTIF_ID = 1001
@@ -49,37 +43,6 @@ class BackgroundCameraService : LifecycleService() {
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
         cameraExecutor = Executors.newSingleThreadExecutor()
-        createInvisibleOverlay()
-    }
-
-    private fun createInvisibleOverlay() {
-        try {
-            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
-            val params = WindowManager.LayoutParams(
-                1, 1, // 1x1 invisible pixel
-                layoutType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSPARENT
-            ).apply {
-                gravity = Gravity.START or Gravity.TOP
-                x = 0
-                y = 0
-            }
-
-            overlayView = View(this)
-            windowManager?.addView(overlayView, params)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,10 +63,19 @@ class BackgroundCameraService : LifecycleService() {
             manager?.createNotificationChannel(channel)
         }
 
+        val stopIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pIntent = PendingIntent.getActivity(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Privacy Guard Active")
-            .setContentText("Continuous visual monitoring engaged...")
+            .setContentTitle("Privacy Guard Running")
+            .setContentText("Visual tripwire active (locks on 2+ faces)...")
             .setSmallIcon(android.R.drawable.ic_secure)
+            .setContentIntent(pIntent)
             .setOngoing(true)
             .build()
 
@@ -181,11 +153,5 @@ class BackgroundCameraService : LifecycleService() {
         isRunning = false
         cameraProvider?.unbindAll()
         cameraExecutor.shutdown()
-
-        try {
-            overlayView?.let { windowManager?.removeView(it) }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
     }
 }
