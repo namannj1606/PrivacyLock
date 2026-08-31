@@ -1,6 +1,7 @@
 package com.example.privacylock
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -8,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -22,14 +24,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var tvStatus: TextView
     private lateinit var btnAdmin: Button
+    private lateinit var btnUsage: Button
     private lateinit var btnToggle: Button
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-            if (cameraGranted) {
-                toggleService()
-            } else {
+            if (!cameraGranted) {
                 Toast.makeText(this, "Camera permission required.", Toast.LENGTH_SHORT).show()
             }
         }
@@ -43,6 +44,7 @@ class MainActivity : AppCompatActivity() {
 
         tvStatus = findViewById(R.id.tvStatus)
         btnAdmin = findViewById(R.id.btnAdmin)
+        btnUsage = findViewById(R.id.btnUsage)
         btnToggle = findViewById(R.id.btnToggle)
 
         updateUi()
@@ -62,13 +64,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnUsage.setOnClickListener {
+            val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+            startActivity(intent)
+            Toast.makeText(this, "Find 'PrivacyLock' and enable Usage Access", Toast.LENGTH_LONG).show()
+        }
+
         btnToggle.setOnClickListener {
             if (!dpm.isAdminActive(adminComponent)) {
-                Toast.makeText(this, "Please enable Device Admin first.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Please grant Device Admin first.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            checkPermissionsAndToggle()
+            if (!hasUsageStatsPermission()) {
+                Toast.makeText(this, "Please grant Usage Access first.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            toggleService()
         }
+
+        checkPermissions()
     }
 
     override fun onResume() {
@@ -76,7 +90,7 @@ class MainActivity : AppCompatActivity() {
         updateUi()
     }
 
-    private fun checkPermissionsAndToggle() {
+    private fun checkPermissions() {
         val permissionsToRequest = mutableListOf(Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -88,9 +102,26 @@ class MainActivity : AppCompatActivity() {
 
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
-        } else {
-            toggleService()
         }
+    }
+
+    private fun hasUsageStatsPermission(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     private fun toggleService() {
@@ -106,14 +137,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUi() {
         val adminActive = dpm.isAdminActive(adminComponent)
+        val usageActive = hasUsageStatsPermission()
+
         btnAdmin.text = if (adminActive) "1. Device Admin: ACTIVE" else "1. Grant Device Admin"
+        btnUsage.text = if (usageActive) "2. Usage Access: ACTIVE" else "2. Grant Usage Access"
 
         if (BackgroundCameraService.isRunning) {
-            tvStatus.text = "Status: ARMED & MONITORING"
-            btnToggle.text = "2. Stop Protection"
+            tvStatus.text = "Status: SENTINEL ARMED (Watching for PW)"
+            btnToggle.text = "3. Stop Sentinel"
         } else {
-            tvStatus.text = "Status: Standby / Idle"
-            btnToggle.text = "2. Start Protection"
+            tvStatus.text = "Status: Idle / Standby"
+            btnToggle.text = "3. Start Sentinel"
         }
     }
 }

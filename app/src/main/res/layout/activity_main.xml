@@ -10,7 +10,7 @@
         android:id="@+id/tvStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Status: Idle"
+        android:text="Status: Initializing..."
         android:textSize="18sp"
         android:textStyle="bold"
         android:layout_marginBottom="28dp" />
@@ -23,10 +23,17 @@
         android:layout_marginBottom="12dp" />
 
     <Button
+        android:id="@+id/btnUsage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="2. Grant Usage Access (Undetectable Auto-Trigger)"
+        android:layout_marginBottom="12dp" />
+
+    <Button
         android:id="@+id/btnToggle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="2. Start Protection"
+        android:text="3. Start Background Sentinel"
         android:layout_marginBottom="12dp" />
 
 </LinearLayout>
